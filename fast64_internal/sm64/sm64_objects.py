@@ -1,49 +1,14 @@
-import math, bpy, mathutils
+import math, os, bpy, bmesh, mathutils
 from bpy.utils import register_class, unregister_class
-from re import findall
+from io import BytesIO
+
+from .sm64_constants import *
 from .sm64_function_map import func_map
+from .sm64_spline import *
+from .sm64_geolayout_classes import *
 
-from ..utility import (
-    PluginError,
-    CData,
-    Vector,
-    toAlnum,
-    convertRadiansToS16,
-    checkIdentityRotation,
-    obj_scale_is_unified,
-    all_values_equal_x,
-    checkIsSM64PreInlineGeoLayout,
-    prop_split,
-)
-
-from .sm64_constants import (
-    levelIDNames,
-    enumLevelNames,
-    enumModelIDs,
-    enumMacrosNames,
-    enumSpecialsNames,
-    enumBehaviourPresets,
-    groupsSeg5,
-    groupsSeg6,
-)
-
-from .sm64_spline import (
-    assertCurveValid,
-    convertSplineObject,
-)
-
-from .sm64_geolayout_classes import (
-    DisplayListNode,
-    JumpNode,
-    TranslateNode,
-    RotateNode,
-    TranslateRotateNode,
-    FunctionNode,
-    CustomNode,
-    BillboardNode,
-    ScaleNode,
-)
-
+from ..utility import *
+from ..f3d.f3d_material import sm64EnumDrawLayers
 
 enumTerrain = [
     ("Custom", "Custom", "Custom"),
@@ -167,6 +132,8 @@ backgroundSegments = {
 
 enumWaterBoxType = [("Water", "Water", "Water"), ("Toxic Haze", "Toxic Haze", "Toxic Haze")]
 
+enumTrajectoryType = [("Trajectory", "Trajectory", "Trajectory")]
+
 
 class InlineGeolayoutObjConfig:
     def __init__(
@@ -206,6 +173,7 @@ inlineGeoLayoutObjects = {
     "Geo Scale": InlineGeolayoutObjConfig("Geo Scale", ScaleNode, can_have_dl=True, uses_scale=True),
     "Geo Displaylist": InlineGeolayoutObjConfig("Geo Displaylist", DisplayListNode, must_have_dl=True),
     "Custom Geo Command": InlineGeolayoutObjConfig("Custom Geo Command", CustomNode),
+    
 }
 
 # When adding new types related to geolayout,
@@ -222,6 +190,7 @@ enumObjectType = [
     ("Water Box", "Water Box", "Water Box"),
     ("Camera Volume", "Camera Volume", "Camera Volume"),
     ("Switch", "Switch Node", "Switch Node"),
+    ("Trajectory Point", "Trajectory Point", "Trajectory Point"),
     ("Puppycam Volume", "Puppycam Volume", "Puppycam Volume"),
     ("", "Inline Geolayout Commands", ""),  # This displays as a column header for the next set of options
     *[(key, key, key) for key in inlineGeoLayoutObjects.keys()],
@@ -1225,9 +1194,16 @@ class SM64ObjectPanel(bpy.types.Panel):
 
         elif obj.sm64_obj_type == "Mario Start":
             prop_split(box, obj, "sm64_obj_mario_start_area", "Area")
+            
+            
 
         elif obj.sm64_obj_type == "Trajectory":
             pass
+        
+        elif obj.sm64_obj_type == "Trajectory Point":
+            box.label(text="You can't use this lol.")
+            box.label(text="You can't use this lol.")
+            prop_split(box, obj, "trajectoryPointType", "Trajectory Point Type")
 
         elif obj.sm64_obj_type == "Whirlpool":
             prop_split(box, obj, "whirpool_index", "Index")
@@ -1239,6 +1215,10 @@ class SM64ObjectPanel(bpy.types.Panel):
             prop_split(box, obj, "waterBoxType", "Water Box Type")
             box.box().label(text="Water box area defined by top face of box shaped empty.")
             box.box().label(text="No rotation allowed.")
+            
+        
+            
+
 
         elif obj.sm64_obj_type == "Level Root":
             levelObj = obj.fast64.sm64.level
@@ -1259,10 +1239,10 @@ class SM64ObjectPanel(bpy.types.Panel):
                 # box.box().label(text = 'Background IDs defined in include/geo_commands.h.')
             box.prop(obj, "actSelectorIgnore")
             box.prop(obj, "setAsStartLevel")
-            grid = box.grid_flow(columns=2)
-            obj.fast64.sm64.segment_loads.draw(grid)
             prop_split(box, obj, "acousticReach", "Acoustic Reach")
             obj.starGetCutscenes.draw(box)
+
+            
 
         elif obj.sm64_obj_type == "Area Root":
             # Code that used to be in area inspector
@@ -1384,6 +1364,7 @@ class SM64ObjectPanel(bpy.types.Panel):
 
         elif obj.sm64_obj_type == "None":
             box.box().label(text="This can be used as an empty transform node in a geolayout hierarchy.")
+        
 
     def draw_acts(self, obj, layout):
         layout.label(text="Acts")
@@ -1831,61 +1812,6 @@ class SM64_GameObjectProperties(bpy.types.PropertyGroup):
         return self.bparams
 
 
-class SM64_SegmentProperties(bpy.types.PropertyGroup):
-    seg5_load_custom: bpy.props.StringProperty(name="Segment 5 Seg")
-    seg5_group_custom: bpy.props.StringProperty(name="Segment 5 Group")
-    seg6_load_custom: bpy.props.StringProperty(name="Segment 6 Seg")
-    seg6_group_custom: bpy.props.StringProperty(name="Segment 6 Group")
-    seg5_enum: bpy.props.EnumProperty(name="Segment 5 Group", default="Do Not Write", items=groupsSeg5)
-    seg6_enum: bpy.props.EnumProperty(name="Segment 6 Group", default="Do Not Write", items=groupsSeg6)
-
-    def draw(self, layout):
-        col = layout.column()
-        prop_split(col, self, "seg5_enum", "Segment 5 Select")
-        if self.seg5_enum == "Custom":
-            prop_split(col, self, "seg5_load_custom", "Segment 5 Seg")
-            prop_split(col, self, "seg5_group_custom", "Segment 5 Group")
-        col = layout.column()
-        prop_split(col, self, "seg6_enum", "Segment 6 Select")
-        if self.seg6_enum == "Custom":
-            prop_split(col, self, "seg6_load_custom", "Segment 6 Seg")
-            prop_split(col, self, "seg6_group_custom", "Segment 6 Group")
-
-    def jump_link_from_enum(self, grp):
-        if grp == "Do Not Write":
-            return grp
-        num = int(grp.removeprefix("group")) + 1
-        return f"script_func_global_{num}"
-
-    @property
-    def seg5(self):
-        if self.seg5_enum == "Custom":
-            return self.seg5_load_custom
-        else:
-            return self.seg5_enum
-
-    @property
-    def seg6(self):
-        if self.seg6_enum == "Custom":
-            return self.seg6_load_custom
-        else:
-            return self.seg6_enum
-
-    @property
-    def group5(self):
-        if self.seg5_enum == "Custom":
-            return self.seg5_group_custom
-        else:
-            return self.jump_link_from_enum(self.seg5_enum)
-
-    @property
-    def group6(self):
-        if self.seg6_enum == "Custom":
-            return self.seg6_group_custom
-        else:
-            return self.jump_link_from_enum(self.seg6_enum)
-
-
 class SM64_ObjectProperties(bpy.types.PropertyGroup):
     version: bpy.props.IntProperty(name="SM64_ObjectProperties Version", default=0)
     cur_version = 3  # version after property migration
@@ -1894,7 +1820,6 @@ class SM64_ObjectProperties(bpy.types.PropertyGroup):
     level: bpy.props.PointerProperty(type=SM64_LevelProperties)
     area: bpy.props.PointerProperty(type=SM64_AreaProperties)
     game_object: bpy.props.PointerProperty(type=SM64_GameObjectProperties)
-    segment_loads: bpy.props.PointerProperty(type=SM64_SegmentProperties)
 
     @staticmethod
     def upgrade_changed_props():
@@ -1921,7 +1846,6 @@ sm64_obj_classes = (
     SM64_LevelProperties,
     SM64_AreaProperties,
     SM64_GameObjectProperties,
-    SM64_SegmentProperties,
     SM64_ObjectProperties,
 )
 
@@ -1989,6 +1913,9 @@ def sm64_obj_register():
     bpy.types.Object.whirpool_strength = bpy.props.StringProperty(name="Strength", default="-30")
     bpy.types.Object.waterBoxType = bpy.props.EnumProperty(
         name="Water Box Type", items=enumWaterBoxType, default="Water"
+    )
+    bpy.types.Object.trajectoryType = bpy.props.EnumProperty(
+        name="Trajectory Type", items=enumTrajectoryType, default="Trajectory"
     )
 
     bpy.types.Object.sm64_obj_use_act1 = bpy.props.BoolProperty(name="Act 1", default=True)
@@ -2115,6 +2042,8 @@ def sm64_obj_register():
     bpy.types.Object.customGeoCommandArgs = bpy.props.StringProperty(name="Geolayout macro arguments", default="")
 
     bpy.types.Object.enableRoomSwitch = bpy.props.BoolProperty(name="Enable Room System")
+    
+
 
 
 def sm64_obj_unregister():
@@ -2192,6 +2121,8 @@ def sm64_obj_unregister():
     del bpy.types.Object.switchFunc
     del bpy.types.Object.switchParam
     del bpy.types.Object.enableRoomSwitch
+
+ 
 
     for cls in reversed(sm64_obj_classes):
         unregister_class(cls)

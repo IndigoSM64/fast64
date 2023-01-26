@@ -1,5 +1,5 @@
-import bpy
 from ..utility import PluginError
+import bpy
 
 
 def getBoneGroupByName(armatureObj, name):

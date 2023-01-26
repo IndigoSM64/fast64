@@ -1,5 +1,5 @@
 import os, re, bpy
-from ..utility import PluginError, writeIfNotFound, getDataFromFile, saveDataToFile, CScrollData, CData
+from ..utility import *
 from .c_templates.tile_scroll import tile_scroll_c, tile_scroll_h
 from .sm64_utility import getMemoryCFilePath
 
@@ -326,28 +326,16 @@ def writeTexScrollHeadersLevel(exportDir, includeC, includeH, groupName, scrollD
     pass
 
 
-def modifyTexScrollHeadersGroup(
-    exportDir: str,
-    includeC: str,
-    includeH: str,
-    groupName: str,
-    topLevelScrollFunc: str,
-    dataInclude: str,
-    hasScrolling: bool,
-):
+def modifyTexScrollHeadersGroup(exportDir, includeC, includeH, groupName, scrollDefines, dataInclude, hasScrolling):
     if not bpy.context.scene.disableScroll and hasScrolling:
-        fileStatus = writeTexScrollHeadersGroup(
-            exportDir, includeC, includeH, groupName, topLevelScrollFunc, dataInclude
-        )
+        fileStatus = writeTexScrollHeadersGroup(exportDir, includeC, includeH, groupName, scrollDefines, dataInclude)
         return fileStatus
     else:
-        removeTexScrollHeadersGroup(exportDir, includeC, includeH, groupName, topLevelScrollFunc)
+        removeTexScrollHeadersGroup(exportDir, includeC, includeH, groupName, scrollDefines, dataInclude)
         return None
 
 
-def writeTexScrollHeadersGroup(
-    exportDir: str, includeC: str, includeH: str, groupName: str, topLevelScrollFunc: str, dataInclude: str
-):
+def writeTexScrollHeadersGroup(exportDir, includeC, includeH, groupName, scrollDefines, dataInclude):
 
     # Create group scroll files
     fileStatus = createTexScrollHeadersGroup(exportDir, groupName, dataInclude)
@@ -378,7 +366,9 @@ def writeTexScrollHeadersGroup(
     else:
         raise PluginError("Could not find include string index.")
 
-    scrollFunction = f"{topLevelScrollFunc}();\n"
+    # Call actor scroll functions in group scroll function
+    # The last function will be the one that calls all the others
+    scrollFunction = scrollDefines.split("extern void ")[-1]
     matchResult = re.search(
         "void\s*scroll\_textures\_" + re.escape(groupName) + "\s*\(\)\s*{\s*" + "(((?!\}).)*)\}", groupDataC, re.DOTALL
     )
@@ -398,7 +388,7 @@ def writeTexScrollHeadersGroup(
     return fileStatus
 
 
-def removeTexScrollHeadersGroup(exportDir: str, includeC: str, includeH: str, groupName: str, topLevelScrollFunc: str):
+def removeTexScrollHeadersGroup(exportDir, includeC, includeH, groupName, scrollDefines, dataInclude):
 
     includeH += "\n"
     includeC += "\n"
@@ -427,7 +417,7 @@ def removeTexScrollHeadersGroup(exportDir: str, includeC: str, includeH: str, gr
         if includeC in groupDataC:
             groupDataC = groupDataC.replace(includeC, "")
 
-        scrollFunction = f"{topLevelScrollFunc}();\n"
+        scrollFunction = scrollDefines.split("extern void ")[-1]
         matchResult = re.search(
             "void\s*scroll\_textures\_" + re.escape(groupName) + "\s*\(\)\s*{\s*" + "(((?!\}).)*)\}",
             groupDataC,
@@ -444,9 +434,9 @@ def removeTexScrollHeadersGroup(exportDir: str, includeC: str, includeH: str, gr
             groupFileC.close()
 
 
-def modifyTexScrollFiles(exportDir: str, assetDir: str, scrollData: CScrollData):
-    if not bpy.context.scene.disableScroll and scrollData.hasScrolling():
-        writeTexScrollFiles(exportDir, assetDir, scrollData)
+def modifyTexScrollFiles(exportDir, assetDir, header, data, hasScrolling):
+    if not bpy.context.scene.disableScroll and hasScrolling:
+        writeTexScrollFiles(exportDir, assetDir, header, data)
     else:
         removeTexScrollFiles(exportDir, assetDir)
 
@@ -460,14 +450,14 @@ def removeTexScrollFiles(exportDir, assetDir):
         os.remove(texscrollHPath)
 
 
-def writeTexScrollFiles(exportDir: str, assetDir: str, scrollData: CData):
+def writeTexScrollFiles(exportDir, assetDir, header, data):
     texscrollCPath = os.path.join(assetDir, "texscroll.inc.c")
     texscrollHPath = os.path.join(assetDir, "texscroll.inc.h")
 
     texscrollCFile = open(texscrollCPath, "w", newline="\n")
-    texscrollCFile.write(scrollData.source)
+    texscrollCFile.write(data)
     texscrollCFile.close()
 
     texscrollHFile = open(texscrollHPath, "w", newline="\n")
-    texscrollHFile.write(scrollData.header)
+    texscrollHFile.write(header)
     texscrollHFile.close()

@@ -1,10 +1,8 @@
-import bpy, random, string, os, math, traceback, re, os, mathutils, ast, operator
+import bpy, random, string, os, math, traceback, re, os, mathutils
 from math import pi, ceil, degrees, radians
 from mathutils import *
 from .utility_anim import *
-from typing import Callable, Iterable, Any
-
-CollectionProperty = Any  # collection prop as defined by using bpy.props.CollectionProperty
+from typing import Callable, Iterable
 
 
 class PluginError(Exception):
@@ -15,15 +13,10 @@ class VertexWeightError(PluginError):
     pass
 
 
-# default indentation to use when writing to decomp files
-indent = " " * 4
-
 geoNodeRotateOrder = "ZXY"
 sm64BoneUp = Vector([1, 0, 0])
 
 transform_mtx_blender_to_n64 = lambda: Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
-
-yUpToZUp = mathutils.Quaternion((1, 0, 0), math.radians(90.0)).to_matrix().to_4x4()
 
 axis_enums = [
     ("X", "X", "X"),
@@ -68,7 +61,7 @@ def hexOrDecInt(value):
     elif ">>" in value:
         i = value.index(">>")
         return hexOrDecInt(value[:i]) >> hexOrDecInt(value[i + 2 :])
-    elif "x" in value or "X" in value:
+    elif "x" in value:
         return int(value, 16)
     else:
         return int(value)
@@ -81,7 +74,7 @@ def getOrMakeVertexGroup(obj, groupName):
     return obj.vertex_groups.new(name=groupName)
 
 
-def unhideAllAndGetHiddenState(scene):
+def unhideAllAndGetHiddenList(scene):
     hiddenObjs = []
     for obj in scene.objects:
         if obj.hide_get():
@@ -90,32 +83,12 @@ def unhideAllAndGetHiddenState(scene):
     if bpy.context.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
     bpy.ops.object.hide_view_clear()
-
-    hiddenLayerCols = []
-
-    layerColStack = [bpy.context.view_layer.layer_collection]
-    while layerColStack:
-        layerCol = layerColStack.pop(0)
-        layerColStack.extend(layerCol.children)
-
-        if layerCol.hide_viewport:
-            hiddenLayerCols.append(layerCol)
-            layerCol.hide_viewport = False
-
-    hiddenState = (hiddenObjs, hiddenLayerCols)
-
-    return hiddenState
+    return hiddenObjs
 
 
-def restoreHiddenState(hiddenState):
-    # as returned by unhideAllAndGetHiddenState
-    (hiddenObjs, hiddenLayerCols) = hiddenState
-
+def hideObjsInList(hiddenObjs):
     for obj in hiddenObjs:
         obj.hide_set(True)
-
-    for layerCol in hiddenLayerCols:
-        layerCol.hide_viewport = True
 
 
 def readFile(filepath):
@@ -151,6 +124,13 @@ def parentObject(parent, child):
     parent.select_set(True)
     bpy.context.view_layer.objects.active = parent
     bpy.ops.object.parent_set(type="OBJECT", keep_transform=True)
+
+
+def attemptModifierApply(modifier):
+    try:
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+    except Exception as e:
+        print("Skipping modifier " + str(modifier.name))
 
 
 def getFMeshName(vertexGroup, namePrefix, drawLayer, isSkinned):
@@ -296,7 +276,7 @@ def propertyGroupEquals(oldProp, newProp):
             equivalent &= propertyGroupEquals(sub_value, getattr(newProp, sub_value_attr))
         elif type(sub_value).__name__ == "bpy_prop_collection_idprop":
             newCollection = getattr(newProp, sub_value_attr)
-            equivalent &= propertyCollectionEquals(sub_value, newCollection)
+            copyPropertyCollection(sub_value, newCollection)
         else:
             newValue = getattr(newProp, sub_value_attr)
             try:
@@ -343,27 +323,6 @@ class CData:
     def append(self, other):
         self.source += other.source
         self.header += other.header
-
-
-class CScrollData(CData):
-    """This class contains a list of function names, so that the top level scroll function can call all of them."""
-
-    def __init__(self):
-        self.functionCalls: list[str] = []
-        """These function names are all called in one top level scroll function."""
-
-        self.topLevelScrollFunc: str = ""
-        """This function is the final one that calls all the others."""
-
-        CData.__init__(self)
-
-    def append(self, other):
-        if isinstance(other, CScrollData):
-            self.functionCalls.extend(other.functionCalls)
-        CData.append(self, other)
-
-    def hasScrolling(self):
-        return len(self.functionCalls) > 0
 
 
 def getObjectFromData(data):
@@ -857,7 +816,6 @@ def get_obj_temp_mesh(obj):
         if o.get("temp_export") and o.get("instanced_mesh_name") == obj.get("instanced_mesh_name"):
             return o
 
-
 def apply_objects_modifiers_and_transformations(allObjs: Iterable[bpy.types.Object]):
     # first apply modifiers so that any objects that affect each other are taken into consideration
     for selectedObj in allObjs:
@@ -875,7 +833,6 @@ def apply_objects_modifiers_and_transformations(allObjs: Iterable[bpy.types.Obje
         bpy.context.view_layer.objects.active = selectedObj
 
         bpy.ops.object.transform_apply(location=False, rotation=True, scale=True, properties=False)
-
 
 def duplicateHierarchy(obj, ignoreAttr, includeEmpties, areaIndex):
     # Duplicate objects to apply scale / modifiers / linked data
@@ -1526,18 +1483,3 @@ def ootGetBaseOrCustomLight(prop, idx, toExport: bool, errIfMissing: bool):
     if toExport:
         col, dir = exportColor(col), normToSigned8Vector(dir)
     return col, dir
-
-
-binOps = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.Mod: operator.mod,
-    ast.LShift: operator.lshift,
-    ast.RShift: operator.rshift,
-    ast.RShift: operator.rshift,
-    ast.BitOr: operator.or_,
-    ast.BitAnd: operator.and_,
-    ast.BitXor: operator.xor,
-}

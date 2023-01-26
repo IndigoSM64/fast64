@@ -81,11 +81,6 @@ ootEnumConveyorSpeed = [
     ("0x03", "Fast", "Fast"),
 ]
 
-ootEnumCameraCrawlspaceSType = [
-    ("Custom", "Custom", "Custom"),
-    ("CAM_SET_CRAWLSPACE", "Crawlspace", "Crawlspace"),
-]
-
 ootEnumCameraSType = [
     ("Custom", "Custom", "Custom"),
     ("CAM_SET_NONE", "None", "None"),
@@ -193,7 +188,7 @@ decomp_compat_map_CameraSType = {
     "CAM_SET_LIFTBEAN": "CAM_SET_BEAN_LOST_WOODS",
     "CAM_SET_SCENE0": "CAM_SET_SCENE_UNUSED",
     "CAM_SET_SCENE1": "CAM_SET_SCENE_TRANSITION",
-    "CAM_SET_HIDAN1": "CAM_SET_ELEVATOR_PLATFORM",
+    "CAM_SET_HIDAN1": "CAM_SET_FIRE_PLATFORM",
     "CAM_SET_HIDAN2": "CAM_SET_FIRE_STAIRCASE",
     "CAM_SET_MORI2": "CAM_SET_FOREST_UNUSED",
     "CAM_SET_MORI3": "CAM_SET_FOREST_DEFEAT_POE",
@@ -425,20 +420,14 @@ def getPolygonType(collisionProp):
 
 
 class OOTWaterBox(BoxEmpty):
-    def __init__(self, roomIndex, lightingSetting, cameraSetting, flag19, position, scale, emptyScale):
+    def __init__(self, roomIndex, lightingSetting, cameraSetting, position, scale, emptyScale):
         self.roomIndex = roomIndex
         self.lightingSetting = lightingSetting
         self.cameraSetting = cameraSetting
-        self.flag19 = flag19
         BoxEmpty.__init__(self, position, scale, emptyScale)
 
     def propertyData(self):
-        value = (
-            ((1 if self.flag19 else 0) << 19)
-            | (int(self.roomIndex) << 13)
-            | (self.lightingSetting << 8)
-            | (self.cameraSetting << 0)
-        )
+        value = (int(self.roomIndex) << 13) | (self.lightingSetting << 8) | (self.cameraSetting << 0)
         return convertIntTo2sComplement(value, 4, False)
 
 
@@ -466,17 +455,11 @@ class OOTCameraData:
 
 
 class OOTCameraPosData:
-    def __init__(self, camSType, hasPositionData, position, rotation, fov, bgImageOverrideIndex):
+    def __init__(self, camSType, hasPositionData, position, rotation, fov, jfifID):
         self.camSType = camSType
         self.position = position
         self.rotation = rotation
         self.fov = fov
-        self.bgImageOverrideIndex = bgImageOverrideIndex
+        self.jfifID = jfifID
         self.unknown = -1
         self.hasPositionData = hasPositionData
-
-
-class OOTCrawlspaceData:
-    def __init__(self, camSType):
-        self.camSType = camSType
-        self.points = []

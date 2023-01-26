@@ -7,6 +7,7 @@ sm64GoalTypeEnum = [
 	('Export Object/Actor/Anim', 'Export Object/Actor/Anim', 'Export Object/Actor/Anim'),
 	('Export Level', 'Export Level', 'Export Level'),
 	('Export Displaylist', 'Export Displaylist', 'Export Displaylist'),
+    ('Export Trajectory', 'Export Trajectory', 'Export Trajectory'),
 	('Export UI Image', 'Export UI Image', 'Export UI Image'),
 ]
 

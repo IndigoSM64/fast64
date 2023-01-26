@@ -1,44 +1,17 @@
-import bpy, os, math, re, shutil, mathutils
 from collections import defaultdict
 from bpy.utils import register_class, unregister_class
+import bpy, os, math, re, shutil
+
+from .sm64_constants import *
+from .sm64_objects import *
+from .sm64_collision import *
+from .sm64_geolayout_writer import *
+from .sm64_texscroll import *
+from .sm64_utility import *
+
+from ..utility import *
 from ..panels import SM64_Panel
 from ..operators import ObjectDataExporter
-from .sm64_constants import cameraTriggerNames, levelIDNames, enumLevelNames
-from .sm64_objects import exportAreaCommon, backgroundSegments
-from .sm64_collision import exportCollisionCommon
-from .sm64_f3d_writer import SM64Model, SM64GfxFormatter
-from .sm64_geolayout_writer import setRooms, convertObjectToGeolayout
-from .sm64_f3d_writer import modifyTexScrollFiles, modifyTexScrollHeadersGroup
-from .sm64_utility import cameraWarning, starSelectWarning
-
-from ..utility import (
-    PluginError,
-    writeIfNotFound,
-    getDataFromFile,
-    saveDataToFile,
-    unhideAllAndGetHiddenState,
-    restoreHiddenState,
-    overwriteData,
-    selectSingleObject,
-    deleteIfFound,
-    applyBasicTweaks,
-    applyRotation,
-    prop_split,
-    toAlnum,
-    writeMaterialHeaders,
-    raisePluginError,
-    customExportWarning,
-    decompFolderMessage,
-    makeWriteInfoBox,
-    writeMaterialFiles,
-)
-
-from ..f3d.f3d_gbi import (
-    ScrollMethod,
-    TextureExportSettings,
-    DLFormat,
-)
-
 
 levelDefineArgs = {
     "internal name": 0,
@@ -445,29 +418,6 @@ def replaceSegmentLoad(levelscript, segmentName, command, changedSegment):
     changedLoad[1][2] = segmentName + "SegmentRomEnd"
 
 
-def replaceScriptLoads(levelscript, obj):
-    newFuncs = []
-    for jumpLink in levelscript.levelFunctions:
-        target = jumpLink[1][0]  # format is [macro, list[args], comment]
-        if "script_func_global_" not in target:
-            newFuncs.append(jumpLink)
-            continue
-        scriptNum = int(re.findall(r"\d+", target)[-1])
-        # this is common0
-        if scriptNum == 1:
-            newFuncs.append(jumpLink)
-            continue
-        if scriptNum < 13:
-            newNum = obj.fast64.sm64.segment_loads.group5
-        else:
-            newNum = obj.fast64.sm64.segment_loads.group6
-        if newNum == "Do Not Write":
-            newFuncs.append(jumpLink)
-            continue
-        newFuncs.append(["JUMP_LINK", [newNum], jumpLink[2]])
-    levelscript.levelFunctions = newFuncs
-
-
 def stringToMacros(data):
     macroData = []
     for matchResult in re.finditer("(\w*)\((((?!\)).)*)\),?(((?!\n)\s)*\/\/((?!\n).)*)?", data):
@@ -733,7 +683,7 @@ def exportLevelC(
     zoomFlags = [False, False, False, False]
 
     if bpy.context.scene.exportHiddenGeometry:
-        hiddenState = unhideAllAndGetHiddenState(bpy.context.scene)
+        hiddenObjs = unhideAllAndGetHiddenList(bpy.context.scene)
 
     for child in childAreas:
         if len(child.children) == 0:
@@ -836,9 +786,9 @@ def exportLevelC(
 
     # Generate levelscript string
     compressionFmt = bpy.context.scene.compressionFormat
-    replaceSegmentLoad(prevLevelScript, f"_{levelName}_segment_7", f"LOAD_{compressionFmt.upper()}", 0x07)
+    replaceSegmentLoad(prevLevelScript, "_" + levelName + "_segment_7", "LOAD_" + compressionFmt.upper(), 0x07)
     if usesEnvFX:
-        replaceSegmentLoad(prevLevelScript, f"_effect_{compressionFmt}", f"LOAD_{compressionFmt.upper()}", 0x0B)
+        replaceSegmentLoad(prevLevelScript, "_effect_" + compressionFmt, "LOAD_" + compressionFmt.upper(), 0x0B)
     if not obj.useBackgroundColor:
         segment = ""
         if obj.background == "CUSTOM":
@@ -846,29 +796,13 @@ def exportLevelC(
         else:
             segment = backgroundSegments[obj.background] + "_skybox"
 
-        replaceSegmentLoad(prevLevelScript, f"_{segment}_{compressionFmt}", f"LOAD_{compressionFmt.upper()}", 0x0A)
-    # actor groups
-    if obj.fast64.sm64.segment_loads.seg5_enum != "Do Not Write":
         replaceSegmentLoad(
-            prevLevelScript,
-            f"_{obj.fast64.sm64.segment_loads.seg5}_{compressionFmt}",
-            f"LOAD_{compressionFmt.upper()}",
-            0x05,
+            prevLevelScript, "_" + segment + "_" + compressionFmt, "LOAD_" + compressionFmt.upper(), 0x0A
         )
-        replaceSegmentLoad(prevLevelScript, f"_{obj.fast64.sm64.segment_loads.seg5}_geo", "LOAD_RAW", 0x0C)
-    if obj.fast64.sm64.segment_loads.seg6_enum != "Do Not Write":
-        replaceSegmentLoad(
-            prevLevelScript,
-            f"_{obj.fast64.sm64.segment_loads.seg6}_{compressionFmt}",
-            f"LOAD_{compressionFmt.upper()}",
-            0x06,
-        )
-        replaceSegmentLoad(prevLevelScript, f"_{obj.fast64.sm64.segment_loads.seg6}_geo", "LOAD_RAW", 0x0D)
-    replaceScriptLoads(prevLevelScript, obj)
     levelscriptString = prevLevelScript.to_c(areaString)
 
     if bpy.context.scene.exportHiddenGeometry:
-        restoreHiddenState(hiddenState)
+        hideObjsInList(hiddenObjs)
 
     # Remove old areas.
     for f in os.listdir(levelDir):
@@ -886,7 +820,9 @@ def exportLevelC(
     dynamicData = exportData.dynamicData
     texC = exportData.textureData
 
-    scrollData = fModel.to_c_scroll(levelName, gfxFormatter)
+    scrollData, hasScrolling = fModel.to_c_vertex_scroll(levelName, gfxFormatter)
+    scroll_data = scrollData.source
+    headerScroll = scrollData.header
 
     if fModel.texturesSavedLastExport > 0:
         levelDataString = '#include "levels/' + levelName + '/texture_include.inc.c"\n' + levelDataString
@@ -895,7 +831,7 @@ def exportLevelC(
         texFile.write(texC.source)
         texFile.close()
 
-    modifyTexScrollFiles(exportDir, levelDir, scrollData)
+    modifyTexScrollFiles(exportDir, levelDir, headerScroll, scroll_data, hasScrolling)
 
     # Write materials
     if DLFormat == DLFormat.Static:
@@ -1065,9 +1001,9 @@ def exportLevelC(
             texscrollIncludeC,
             texscrollIncludeH,
             texscrollGroup,
-            scrollData.topLevelScrollFunc,
+            headerScroll,
             texscrollGroupInclude,
-            scrollData.hasScrolling(),
+            hasScrolling,
         )
 
         if texScrollFileStatus is not None:

@@ -1,52 +1,9 @@
-import bpy
-from struct import pack
-from copy import copy
+from .sm64_geolayout_constants import *
+from .sm64_geolayout_utility import *
+from .sm64_constants import *
 from .sm64_function_map import func_map
-
-from ..utility import (
-    PluginError,
-    CData,
-    toAlnum,
-    encodeSegmentedAddr,
-    writeVectorToShorts,
-    convertFloatToShort,
-    writeEulerVectorToShorts,
-    writeFloatToShort,
-    convertEulerFloatToShort,
-    join_c_args,
-    radians_to_s16,
-    geoNodeRotateOrder,
-)
-
-from .sm64_geolayout_constants import (
-    nodeGroupCmds,
-    GEO_END,
-    GEO_RETURN,
-    GEO_NODE_OPEN,
-    GEO_NODE_CLOSE,
-    GEO_BRANCH,
-    GEO_CALL_ASM,
-    GEO_HELD_OBJECT,
-    GEO_START,
-    GEO_SWITCH,
-    GEO_TRANSLATE_ROTATE,
-    GEO_TRANSLATE,
-    GEO_ROTATE,
-    GEO_BILLBOARD,
-    GEO_LOAD_DL,
-    GEO_START_W_SHADOW,
-    GEO_START_W_RENDERAREA,
-    GEO_SET_RENDER_RANGE,
-    GEO_LOAD_DL_W_OFFSET,
-    GEO_SCALE,
-    GEO_SET_RENDER_AREA,
-    GEO_SET_ORTHO,
-    GEO_SET_CAMERA_FRUSTRUM,
-    GEO_SET_Z_BUF,
-    GEO_CAMERA,
-    GEO_SETUP_OBJ_RENDER,
-    GEO_SET_BG,
-)
+from ..utility import *
+import struct, copy
 
 drawLayerNames = {
     0: "LAYER_FORCE",
@@ -139,7 +96,7 @@ class GeolayoutGraph:
                         raise PluginError("Circular geolayout dependency." + str(callOrder))
                 else:
                     geolayoutList.insert(geolayoutList.index(geolayout), calledGeolayout)
-                    callOrder = copy(callOrder)
+                    callOrder = copy.copy(callOrder)
                     callOrder.append(calledGeolayout)
                     self.sortGeolayouts(geolayoutList, calledGeolayout, callOrder)
         return geolayoutList
@@ -1010,7 +967,7 @@ class OrthoNode:
     def to_binary(self, segmentData):
         command = bytearray([GEO_SET_ORTHO, 0x00])
         # FIX: This should be f32.
-        command.extend(bytearray(pack(">f", self.scale)))
+        command.extend(bytearray(struct.pack(">f", self.scale)))
         return command
 
     def to_c(self):
@@ -1030,7 +987,7 @@ class FrustumNode:
 
     def to_binary(self, segmentData):
         command = bytearray([GEO_SET_CAMERA_FRUSTRUM, 0x01 if self.useFunc else 0x00])
-        command.extend(bytearray(pack(">f", self.fov)))
+        command.extend(bytearray(struct.pack(">f", self.fov)))
         command.extend(self.near.to_bytes(2, "big", signed=True))  # Conversion?
         command.extend(self.far.to_bytes(2, "big", signed=True))  # Conversion?
 
